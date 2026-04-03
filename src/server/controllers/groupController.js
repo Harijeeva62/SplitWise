@@ -76,14 +76,16 @@ exports.getGroups = async (req, res) => {
           .select('*', { count: 'exact', head: true })
           .eq('group_id', g.id);
 
-        const { data: expData } = await supabase
+        const { data: expenses } = await supabase
           .from('expenses')
           .select('amount')
           .eq('group_id', g.id);
 
-        const total_expense = expData ? expData.reduce((sum, e) => sum + parseFloat(e.amount), 0) : 0;
+        const group_total = expenses
+          ? expenses.reduce((sum, e) => sum + parseFloat(e.amount), 0)
+          : 0;
 
-        return { ...g, member_count: count || 0, total_expense: parseFloat(total_expense.toFixed(2)) };
+        return { ...g, member_count: count || 0, group_total: parseFloat(group_total.toFixed(2)) };
       })
     );
 
@@ -420,5 +422,85 @@ exports.handleJoinRequest = async (req, res) => {
   } catch (err) {
     console.error('Handle join request error:', err);
     res.status(500).json({ error: 'Failed to handle join request.' });
+  }
+};
+
+exports.leaveGroup = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    // Check membership
+    const { data: membership } = await supabase
+      .from('group_members')
+      .select('id')
+      .eq('group_id', id)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (!membership) {
+      return res.status(400).json({ error: 'Not a member of this group.' });
+    }
+
+    // Check if admin — admin cannot leave, must delete
+    const { data: group } = await supabase
+      .from('groups')
+      .select('created_by')
+      .eq('id', id)
+      .single();
+
+    if (group && group.created_by === userId) {
+      return res.status(400).json({ error: 'Admin cannot leave the group. Delete the group instead.' });
+    }
+
+    await supabase.from('group_members').delete().eq('group_id', id).eq('user_id', userId);
+    res.json({ message: 'Left the group.' });
+  } catch (err) {
+    console.error('Leave group error:', err);
+    res.status(500).json({ error: 'Failed to leave group.' });
+  }
+};
+
+exports.deleteGroup = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    // Only admin can delete
+    const { data: group } = await supabase
+      .from('groups')
+      .select('created_by')
+      .eq('id', id)
+      .single();
+
+    if (!group || group.created_by !== userId) {
+      return res.status(403).json({ error: 'Only the group admin can delete this group.' });
+    }
+
+    // Get all expenses in the group
+    const { data: expenses } = await supabase
+      .from('expenses')
+      .select('id')
+      .eq('group_id', id);
+
+    const expenseIds = expenses ? expenses.map(e => e.id) : [];
+
+    // Delete expense_splits
+    if (expenseIds.length > 0) {
+      await supabase.from('expense_splits').delete().in('expense_id', expenseIds);
+    }
+
+    // Delete settlements, expenses, join_requests, members, then group
+    await supabase.from('settlements').delete().eq('group_id', id);
+    await supabase.from('expenses').delete().eq('group_id', id);
+    await supabase.from('join_requests').delete().eq('group_id', id);
+    await supabase.from('group_members').delete().eq('group_id', id);
+    const { error } = await supabase.from('groups').delete().eq('id', id);
+    if (error) throw error;
+
+    res.json({ message: 'Group deleted.' });
+  } catch (err) {
+    console.error('Delete group error:', err);
+    res.status(500).json({ error: 'Failed to delete group.' });
   }
 };

@@ -1,16 +1,22 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 
+const CATEGORY_ICONS = {
+  General: '📋', Food: '🍔', Transport: '🚗', Stay: '🏨',
+  Shopping: '🛒', Entertainment: '🎬', Bills: '💡', Other: '📦',
+};
+
 export default function GroupDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [group, setGroup] = useState(null);
   const [expenses, setExpenses] = useState([]);
+  const [groupTotal, setGroupTotal] = useState(0);
   const [balances, setBalances] = useState([]);
   const [settlements, setSettlements] = useState([]);
-  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('expenses');
 
@@ -27,11 +33,11 @@ export default function GroupDetail() {
   const [expAmount, setExpAmount] = useState('');
   const [expPaidBy, setExpPaidBy] = useState('');
   const [expSplitBetween, setExpSplitBetween] = useState([]);
-  const [expCategory, setExpCategory] = useState('other');
+  const [expCategory, setExpCategory] = useState('General');
   const [expNotes, setExpNotes] = useState('');
-  const [expSplitType, setExpSplitType] = useState('equal');
-  const [customSplits, setCustomSplits] = useState({});
-  const [expDate, setExpDate] = useState('');
+  const [expDate, setExpDate] = useState(new Date().toISOString().split('T')[0]);
+  const [splitType, setSplitType] = useState('equal');
+  const [customAmounts, setCustomAmounts] = useState({});
   const [addingExpense, setAddingExpense] = useState(false);
 
   // Join requests (admin)
@@ -40,33 +46,20 @@ export default function GroupDetail() {
 
   const isAdmin = group?.created_by === user?.id;
 
-  const CATEGORIES = [
-    { key: 'food', label: 'Food', icon: '🍔' },
-    { key: 'transport', label: 'Transport', icon: '🚗' },
-    { key: 'shopping', label: 'Shopping', icon: '🛍️' },
-    { key: 'entertainment', label: 'Fun', icon: '🎬' },
-    { key: 'stay', label: 'Stay', icon: '🏨' },
-    { key: 'groceries', label: 'Groceries', icon: '🛒' },
-    { key: 'bills', label: 'Bills', icon: '📄' },
-    { key: 'other', label: 'Other', icon: '📌' },
-  ];
-
-  const getCategoryInfo = (key) => CATEGORIES.find(c => c.key === key) || CATEGORIES[CATEGORIES.length - 1];
-
   const fetchAll = async () => {
     try {
-      const [gRes, eRes, bRes, sRes, sumRes] = await Promise.all([
+      const [gRes, eRes, bRes, sRes] = await Promise.all([
         api.get(`/groups/${id}`),
         api.get(`/expenses/${id}`),
         api.get(`/expenses/${id}/balances`),
         api.get(`/settle/${id}`),
-        api.get(`/expenses/${id}/summary`).catch(() => ({ data: null })),
       ]);
       setGroup(gRes.data);
-      setExpenses(eRes.data);
+      const eData = eRes.data;
+      setExpenses(eData.expenses || eData);
+      setGroupTotal(eData.group_total || 0);
       setBalances(bRes.data);
       setSettlements(sRes.data);
-      setSummary(sumRes.data);
     } catch {
     } finally {
       setLoading(false);
@@ -80,13 +73,8 @@ export default function GroupDetail() {
     } catch {}
   };
 
-  useEffect(() => {
-    fetchAll();
-  }, [id]);
-
-  useEffect(() => {
-    if (isAdmin) fetchJoinRequests();
-  }, [isAdmin, id]);
+  useEffect(() => { fetchAll(); }, [id]);
+  useEffect(() => { if (isAdmin) fetchJoinRequests(); }, [isAdmin, id]);
 
   const handleSearchUsers = async (query) => {
     setMemberSearch(query);
@@ -129,31 +117,29 @@ export default function GroupDetail() {
     }
   };
 
+  const getEffectiveSplit = () => {
+    return expSplitBetween.length > 0 ? expSplitBetween : (group?.members?.map(m => m.id) || []);
+  };
+
   const handleAddExpense = async (e) => {
     e.preventDefault();
     setAddingExpense(true);
     try {
-      const splitBetween = expSplitBetween.length > 0 ? expSplitBetween : group.members.map((m) => m.id);
+      const splitMembers = getEffectiveSplit();
       const payload = {
         group_id: id,
         title: expTitle,
         amount: parseFloat(expAmount),
         paid_by: expPaidBy || user.id,
-        split_between: splitBetween,
+        split_between: splitMembers,
         category: expCategory,
-        notes: expNotes,
-        split_type: expSplitType,
-        expense_date: expDate || undefined,
+        notes: expNotes || undefined,
+        date: expDate,
       };
-      if (expSplitType === 'custom') {
-        payload.custom_splits = splitBetween.map(uid => ({
+      if (splitType === 'custom' && Object.keys(customAmounts).length > 0) {
+        payload.split_amounts = splitMembers.map(uid => ({
           user_id: uid,
-          amount: parseFloat(customSplits[uid] || 0),
-        }));
-      } else if (expSplitType === 'percentage') {
-        payload.custom_splits = splitBetween.map(uid => ({
-          user_id: uid,
-          percentage: parseFloat(customSplits[uid] || 0),
+          amount: parseFloat(customAmounts[uid] || 0),
         }));
       }
       await api.post('/expenses', payload);
@@ -161,11 +147,11 @@ export default function GroupDetail() {
       setExpAmount('');
       setExpPaidBy('');
       setExpSplitBetween([]);
-      setExpCategory('other');
+      setExpCategory('General');
       setExpNotes('');
-      setExpSplitType('equal');
-      setCustomSplits({});
-      setExpDate('');
+      setExpDate(new Date().toISOString().split('T')[0]);
+      setSplitType('equal');
+      setCustomAmounts({});
       setShowAddExpense(false);
       fetchAll();
     } catch {
@@ -175,7 +161,7 @@ export default function GroupDetail() {
   };
 
   const handleDeleteExpense = async (expenseId) => {
-    if (!window.confirm('Delete this expense?')) return;
+    if (!confirm('Delete this expense?')) return;
     try {
       await api.delete(`/expenses/${expenseId}`);
       fetchAll();
@@ -207,6 +193,22 @@ export default function GroupDetail() {
     }
   };
 
+  const handleLeaveGroup = async () => {
+    if (!confirm('Leave this group?')) return;
+    try {
+      await api.post(`/groups/${id}/leave`);
+      navigate('/groups');
+    } catch {}
+  };
+
+  const handleDeleteGroup = async () => {
+    if (!confirm('Delete this group? This cannot be undone.')) return;
+    try {
+      await api.delete(`/groups/${id}`);
+      navigate('/groups');
+    } catch {}
+  };
+
   const toggleSplitUser = (userId) => {
     setExpSplitBetween((prev) =>
       prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
@@ -225,23 +227,17 @@ export default function GroupDetail() {
     return <p className="text-center py-10" style={{ color: 'var(--text-muted)' }}>Group not found.</p>;
   }
 
-  // Calculate simplified debts from balances
+  // Simplified debts
   const debts = [];
   const debtors = balances.filter((b) => b.balance < 0).map((b) => ({ ...b, amount: -b.balance }));
   const creditors = balances.filter((b) => b.balance > 0).map((b) => ({ ...b, amount: b.balance }));
-
-  let i = 0,
-    j = 0;
+  let i = 0, j = 0;
   const d = debtors.map((x) => ({ ...x }));
   const c = creditors.map((x) => ({ ...x }));
   while (i < d.length && j < c.length) {
     const min = Math.min(d[i].amount, c[j].amount);
     if (min > 0.01) {
-      debts.push({
-        from: d[i].user,
-        to: c[j].user,
-        amount: parseFloat(min.toFixed(2)),
-      });
+      debts.push({ from: d[i].user, to: c[j].user, amount: parseFloat(min.toFixed(2)) });
     }
     d[i].amount -= min;
     c[j].amount -= min;
@@ -262,62 +258,41 @@ export default function GroupDetail() {
     <div className="space-y-4 animate-fade-in">
       {/* Group Header — Hero Card */}
       <div className="card-hero p-6 animate-fade-in-up">
-        <div className="flex items-center gap-3.5 relative z-10">
-          <div className="avatar w-13 h-13 rounded-xl text-xl font-bold">
-            {group.name.charAt(0).toUpperCase()}
-          </div>
-          <div>
-            <h2 className="text-xl font-extrabold tracking-tight" style={{ color: 'var(--text-primary)' }}>{group.name}</h2>
-            <p className="text-sm mt-0.5" style={{ color: 'var(--text-dim)' }}>
-              {group.members?.length || 0} members{isAdmin && <span className="badge-accent ml-2 text-[10px]">Admin</span>}
-            </p>
-          </div>
-        </div>
-        {/* Summary Stats */}
-        {summary && (
-          <div className="mt-5 pt-4 relative z-10" style={{ borderTop: '1px solid var(--border)' }}>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="text-center">
-                <p className="text-lg font-bold" style={{ color: 'var(--accent-bright)' }}>₹{parseFloat(summary.total_spend || 0).toLocaleString('en-IN')}</p>
-                <p className="text-[10px] uppercase tracking-wider mt-0.5" style={{ color: 'var(--text-dim)' }}>Total Spent</p>
-              </div>
-              <div className="text-center">
-                <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{summary.expense_count || 0}</p>
-                <p className="text-[10px] uppercase tracking-wider mt-0.5" style={{ color: 'var(--text-dim)' }}>Expenses</p>
-              </div>
-              <div className="text-center">
-                <p className="text-lg font-bold" style={{ color: 'var(--success)' }}>{summary.top_spender?.name || '—'}</p>
-                <p className="text-[10px] uppercase tracking-wider mt-0.5" style={{ color: 'var(--text-dim)' }}>Top Spender</p>
-              </div>
+        <div className="flex items-center justify-between relative z-10">
+          <div className="flex items-center gap-3.5">
+            <div className="avatar w-13 h-13 rounded-xl text-xl font-bold">
+              {group.name.charAt(0).toUpperCase()}
             </div>
-            {/* Category Breakdown */}
-            {summary.category_breakdown?.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {summary.category_breakdown.map((c) => {
-                  const cat = getCategoryInfo(c.category);
-                  return (
-                    <span key={c.category} className="badge text-[11px] flex items-center gap-1">
-                      {cat.icon} {cat.label}: ₹{parseFloat(c.total).toLocaleString('en-IN')}
-                    </span>
-                  );
-                })}
-              </div>
+            <div>
+              <h2 className="text-xl font-extrabold tracking-tight" style={{ color: 'var(--text-primary)' }}>{group.name}</h2>
+              <p className="text-sm mt-0.5" style={{ color: 'var(--text-dim)' }}>
+                {group.members?.length || 0} members{isAdmin && <span className="badge-accent ml-2 text-[10px]">Admin</span>}
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            {!isAdmin && (
+              <button onClick={handleLeaveGroup} className="btn-ghost px-3 py-1.5 text-xs cursor-pointer" title="Leave group">Leave</button>
+            )}
+            {isAdmin && (
+              <button onClick={handleDeleteGroup} className="px-3 py-1.5 text-xs rounded-xl font-semibold cursor-pointer" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--danger)' }} title="Delete group">Delete</button>
             )}
           </div>
-        )}
+        </div>
+        <div className="mt-4 pt-4 relative z-10" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <p className="section-label mb-1">Total Group Spending</p>
+          <p className="text-2xl font-extrabold tracking-tight" style={{ color: 'var(--accent-bright)' }}>₹{groupTotal.toFixed(2)}</p>
+        </div>
       </div>
 
       {/* Tabs */}
       <div className="flex gap-1 rounded-2xl p-1.5" style={{ background: 'var(--bg-elevated)' }}>
         {tabs.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`flex-1 py-2.5 text-xs font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer`}
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className="flex-1 py-2.5 text-xs font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer"
             style={tab === t.key
               ? { background: 'var(--bg-card)', color: 'var(--accent-bright)', boxShadow: '0 2px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04)' }
-              : { color: 'var(--text-dim)' }}
-          >
+              : { color: 'var(--text-dim)' }}>
             {t.icon}
             <span className="hidden sm:inline">{t.label}</span>
             {t.key === 'members' && isAdmin && pendingCount > 0 && (
@@ -327,188 +302,116 @@ export default function GroupDetail() {
         ))}
       </div>
 
-      {/* Expenses Tab */}
+      {/* ===== EXPENSES TAB ===== */}
       {tab === 'expenses' && (
         <div className="space-y-3">
-          <button
-            onClick={() => setShowAddExpense(!showAddExpense)}
-            className={`w-full py-3 rounded-2xl font-semibold text-sm transition-all duration-200 cursor-pointer ${
-              showAddExpense ? 'btn-ghost' : 'btn-primary'
-            }`}
-          >
+          <button onClick={() => setShowAddExpense(!showAddExpense)}
+            className={`w-full py-3 rounded-2xl font-semibold text-sm transition-all duration-200 cursor-pointer ${showAddExpense ? 'btn-ghost' : 'btn-primary'}`}>
             {showAddExpense ? 'Cancel' : '+ Add Expense'}
           </button>
 
           {showAddExpense && (
             <form onSubmit={handleAddExpense} className="card p-5 space-y-3.5 animate-slide-down">
-              {/* Category selector */}
-              <div>
-                <label className="section-label block mb-2">Category</label>
-                <div className="flex flex-wrap gap-2">
-                  {CATEGORIES.map((cat) => (
-                    <button
-                      key={cat.key}
-                      type="button"
-                      onClick={() => setExpCategory(cat.key)}
-                      className="px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
-                      style={expCategory === cat.key
-                        ? { background: 'var(--accent)', color: '#fff', boxShadow: '0 2px 8px rgba(99,102,241,0.3)' }
-                        : { background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
-                    >
-                      <span>{cat.icon}</span> {cat.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="section-label block mb-2">Title</label>
-                <input
-                  type="text"
-                  value={expTitle}
-                  onChange={(e) => setExpTitle(e.target.value)}
-                  placeholder="Expense title"
-                  className="input-dark w-full px-4 py-3 text-sm"
-                  required
-                />
-              </div>
               <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="section-label block mb-2">Title</label>
+                  <input type="text" value={expTitle} onChange={(e) => setExpTitle(e.target.value)} placeholder="Expense title" className="input-dark w-full px-4 py-3 text-sm" required />
+                </div>
                 <div>
                   <label className="section-label block mb-2">Amount</label>
-                  <input
-                    type="number"
-                    value={expAmount}
-                    onChange={(e) => setExpAmount(e.target.value)}
-                    placeholder="₹"
-                    className="input-dark w-full px-4 py-3 text-sm"
-                    min="0.01"
-                    step="0.01"
-                    required
-                  />
+                  <input type="number" value={expAmount} onChange={(e) => setExpAmount(e.target.value)} placeholder="₹ 0.00" className="input-dark w-full px-4 py-3 text-sm" min="0.01" step="0.01" required />
                 </div>
                 <div>
                   <label className="section-label block mb-2">Date</label>
-                  <input
-                    type="date"
-                    value={expDate}
-                    onChange={(e) => setExpDate(e.target.value)}
-                    className="input-dark w-full px-4 py-3 text-sm"
-                  />
+                  <input type="date" value={expDate} onChange={(e) => setExpDate(e.target.value)} className="input-dark w-full px-4 py-3 text-sm" />
                 </div>
               </div>
+
               <div>
-                <label className="section-label block mb-2">Notes (optional)</label>
-                <textarea
-                  value={expNotes}
-                  onChange={(e) => setExpNotes(e.target.value)}
-                  placeholder="Add a description..."
-                  className="input-dark w-full px-4 py-3 text-sm resize-none"
-                  rows={2}
-                />
-              </div>
-              <div>
-                <label className="section-label block mb-2">Paid by</label>
-                <select
-                  value={expPaidBy}
-                  onChange={(e) => setExpPaidBy(e.target.value)}
-                  className="input-dark w-full px-4 py-3 text-sm"
-                >
-                  <option value="">You</option>
-                  {group.members?.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.email})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {/* Split type toggle */}
-              <div>
-                <label className="section-label block mb-2">Split Type</label>
-                <div className="flex gap-1 rounded-xl p-1" style={{ background: 'var(--bg-elevated)' }}>
-                  {[
-                    { key: 'equal', label: 'Equal' },
-                    { key: 'custom', label: 'Custom ₹' },
-                    { key: 'percentage', label: 'Percentage' },
-                  ].map((st) => (
-                    <button
-                      key={st.key}
-                      type="button"
-                      onClick={() => { setExpSplitType(st.key); setCustomSplits({}); }}
-                      className="flex-1 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer"
-                      style={expSplitType === st.key
-                        ? { background: 'var(--bg-card)', color: 'var(--accent-bright)', boxShadow: '0 2px 6px rgba(0,0,0,0.2)' }
-                        : { color: 'var(--text-dim)' }}
-                    >
-                      {st.label}
+                <label className="section-label block mb-2">Category</label>
+                <div className="flex flex-wrap gap-2">
+                  {Object.keys(CATEGORY_ICONS).map((cat) => (
+                    <button key={cat} type="button" onClick={() => setExpCategory(cat)}
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer"
+                      style={expCategory === cat
+                        ? { background: 'var(--accent)', color: 'white', boxShadow: '0 2px 8px rgba(99,102,241,0.3)' }
+                        : { background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
+                      {CATEGORY_ICONS[cat]} {cat}
                     </button>
                   ))}
                 </div>
               </div>
+
+              <div>
+                <label className="section-label block mb-2">Paid by</label>
+                <select value={expPaidBy} onChange={(e) => setExpPaidBy(e.target.value)} className="input-dark w-full px-4 py-3 text-sm">
+                  <option value="">You</option>
+                  {group.members?.map((m) => (
+                    <option key={m.id} value={m.id}>{m.name} ({m.email})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="section-label block mb-2">Notes <span style={{ color: 'var(--text-dim)' }}>(optional)</span></label>
+                <input type="text" value={expNotes} onChange={(e) => setExpNotes(e.target.value)} placeholder="Add a note..." className="input-dark w-full px-4 py-3 text-sm" />
+              </div>
+
+              <div>
+                <label className="section-label block mb-2">Split type</label>
+                <div className="flex gap-2">
+                  {['equal', 'custom'].map((t) => (
+                    <button key={t} type="button" onClick={() => setSplitType(t)}
+                      className="flex-1 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer capitalize"
+                      style={splitType === t
+                        ? { background: 'var(--accent)', color: 'white' }
+                        : { background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
+                      {t === 'equal' ? 'Equal Split' : 'Custom Amounts'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <label className="section-label block mb-2">Split between</label>
                 <div className="space-y-1.5">
                   {group.members?.map((m) => {
-                    const isChecked = expSplitBetween.length === 0 || expSplitBetween.includes(m.id);
+                    const checked = expSplitBetween.length === 0 || expSplitBetween.includes(m.id);
                     return (
                       <div key={m.id} className="flex items-center gap-3 text-sm p-2.5 rounded-xl transition-colors"
                         style={{ color: 'var(--text-secondary)' }}
                         onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-elevated)'}
-                        onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
-                      >
-                        <label className="flex items-center gap-3 flex-1 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
+                        onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}>
+                        <label className="flex items-center gap-3 cursor-pointer flex-1">
+                          <input type="checkbox" checked={checked}
                             onChange={() => {
                               if (expSplitBetween.length === 0) {
-                                setExpSplitBetween(
-                                  group.members.filter((x) => x.id !== m.id).map((x) => x.id)
-                                );
+                                setExpSplitBetween(group.members.filter((x) => x.id !== m.id).map((x) => x.id));
                               } else {
                                 toggleSplitUser(m.id);
                               }
                             }}
-                            className="w-4 h-4 rounded"
-                            style={{ accentColor: 'var(--accent)' }}
-                          />
+                            className="w-4 h-4 rounded" style={{ accentColor: 'var(--accent)' }} />
                           {m.name}
                         </label>
-                        {expSplitType !== 'equal' && isChecked && (
-                          <input
-                            type="number"
-                            placeholder={expSplitType === 'percentage' ? '%' : '₹'}
-                            value={customSplits[m.id] || ''}
-                            onChange={(e) => setCustomSplits(prev => ({ ...prev, [m.id]: e.target.value }))}
-                            className="input-dark w-20 px-2 py-1.5 text-xs text-right"
-                            min="0"
-                            step="0.01"
-                          />
+                        {splitType === 'custom' && checked && (
+                          <input type="number" placeholder="₹ 0" min="0" step="0.01"
+                            value={customAmounts[m.id] || ''}
+                            onChange={(e) => setCustomAmounts(prev => ({ ...prev, [m.id]: e.target.value }))}
+                            className="input-dark w-24 px-3 py-1.5 text-sm text-right" />
                         )}
                       </div>
                     );
                   })}
                 </div>
-                {expSplitType === 'custom' && expAmount && (
-                  <p className="text-[11px] mt-2" style={{ color: (() => {
-                    const total = Object.values(customSplits).reduce((s, v) => s + (parseFloat(v) || 0), 0);
-                    return Math.abs(total - parseFloat(expAmount)) < 0.01 ? 'var(--success)' : 'var(--danger)';
-                  })() }}>
-                    Total: ₹{Object.values(customSplits).reduce((s, v) => s + (parseFloat(v) || 0), 0).toFixed(2)} / ₹{parseFloat(expAmount).toFixed(2)}
-                  </p>
-                )}
-                {expSplitType === 'percentage' && (
-                  <p className="text-[11px] mt-2" style={{ color: (() => {
-                    const total = Object.values(customSplits).reduce((s, v) => s + (parseFloat(v) || 0), 0);
-                    return Math.abs(total - 100) < 0.01 ? 'var(--success)' : 'var(--danger)';
-                  })() }}>
-                    Total: {Object.values(customSplits).reduce((s, v) => s + (parseFloat(v) || 0), 0).toFixed(1)}%
+                {splitType === 'custom' && expAmount && (
+                  <p className="text-xs mt-2" style={{ color: Object.values(customAmounts).reduce((s, v) => s + (parseFloat(v) || 0), 0).toFixed(2) === parseFloat(expAmount).toFixed(2) ? 'var(--success)' : 'var(--danger)' }}>
+                    Total: ₹{Object.values(customAmounts).reduce((s, v) => s + (parseFloat(v) || 0), 0).toFixed(2)} / ₹{parseFloat(expAmount).toFixed(2)}
                   </p>
                 )}
               </div>
-              <button
-                type="submit"
-                disabled={addingExpense}
-                className="btn-primary w-full py-3 disabled:opacity-50 cursor-pointer"
-              >
+
+              <button type="submit" disabled={addingExpense} className="btn-primary w-full py-3 disabled:opacity-50 cursor-pointer">
                 {addingExpense ? (
                   <span className="flex items-center justify-center gap-2">
                     <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -529,59 +432,50 @@ export default function GroupDetail() {
             </div>
           ) : (
             <div className="space-y-2.5 stagger">
-              {expenses.map((exp) => {
-                const cat = getCategoryInfo(exp.category);
-                return (
-                  <div key={exp.id} className="card p-4">
-                    <div className="flex justify-between items-start">
-                      <div className="flex items-start gap-3.5">
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-lg"
-                          style={{ background: 'var(--bg-elevated)' }}>
-                          {cat.icon}
-                        </div>
-                        <div>
-                          <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{exp.title}</p>
-                          <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-dim)' }}>
-                            Paid by {exp.payer?.name || 'Unknown'}
-                            {exp.expense_date && <span> · {new Date(exp.expense_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>}
-                          </p>
-                          {exp.notes && (
-                            <p className="text-[11px] mt-1 italic" style={{ color: 'var(--text-muted)' }}>{exp.notes}</p>
-                          )}
-                        </div>
+              {expenses.map((exp) => (
+                <div key={exp.id} className="card p-4">
+                  <div className="flex justify-between items-start">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg flex-shrink-0 mt-0.5" style={{ background: 'var(--bg-elevated)' }}>
+                        {CATEGORY_ICONS[exp.category] || '📋'}
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div>
+                        <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{exp.title}</p>
+                        <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-dim)' }}>
+                          Paid by {exp.payer?.name || 'Unknown'}
+                          {exp.date && <> &middot; {new Date(exp.date).toLocaleDateString()}</>}
+                        </p>
+                        {exp.notes && <p className="text-[11px] mt-0.5 italic" style={{ color: 'var(--text-muted)' }}>{exp.notes}</p>}
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <div className="text-right">
                         <p className="font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>₹{parseFloat(exp.amount).toFixed(2)}</p>
-                        {(exp.paid_by === user.id || isAdmin) && (
-                          <button
-                            onClick={() => handleDeleteExpense(exp.id)}
-                            className="p-1.5 rounded-lg transition-colors cursor-pointer"
-                            style={{ color: 'var(--text-dim)' }}
-                            onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.15)'; e.currentTarget.style.color = 'var(--danger)'; }}
-                            onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-dim)'; }}
-                            title="Delete expense"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                          </button>
+                        {exp.category && exp.category !== 'General' && (
+                          <span className="badge text-[10px] mt-1 inline-block">{exp.category}</span>
                         )}
                       </div>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {exp.splits?.map((s) => (
-                        <span key={s.user_id} className="badge text-[11px]">
-                          {s.user_name}: ₹{parseFloat(s.amount).toFixed(2)}
-                        </span>
-                      ))}
+                      <button onClick={() => handleDeleteExpense(exp.id)} className="p-1.5 rounded-lg transition-colors cursor-pointer opacity-40 hover:opacity-100"
+                        style={{ color: 'var(--danger)' }} title="Delete expense">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                      </button>
                     </div>
                   </div>
-                );
-              })}
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {exp.splits?.map((s) => (
+                      <span key={s.user_id} className="badge text-[11px]">
+                        {s.user_name}: ₹{parseFloat(s.amount).toFixed(2)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
       )}
 
-      {/* Balances Tab */}
+      {/* ===== BALANCES TAB ===== */}
       {tab === 'balances' && (
         <div className="space-y-2.5 stagger">
           {balances.length === 0 ? (
@@ -620,7 +514,7 @@ export default function GroupDetail() {
         </div>
       )}
 
-      {/* Settle Tab */}
+      {/* ===== SETTLE TAB ===== */}
       {tab === 'settle' && (
         <div className="space-y-3">
           <h3 className="section-label text-xs">Who owes whom</h3>
@@ -644,10 +538,7 @@ export default function GroupDetail() {
                       </p>
                       <p className="text-lg font-bold mt-0.5" style={{ color: 'var(--danger)' }}>₹{dt.amount.toFixed(2)}</p>
                     </div>
-                    <button
-                      onClick={() => handleSettle(dt.from.id, dt.to.id, dt.amount)}
-                      className="btn-primary px-4 py-2 text-xs cursor-pointer"
-                    >
+                    <button onClick={() => handleSettle(dt.from.id, dt.to.id, dt.amount)} className="btn-primary px-4 py-2 text-xs cursor-pointer">
                       Settle Up
                     </button>
                   </div>
@@ -656,62 +547,52 @@ export default function GroupDetail() {
             </div>
           )}
 
-          {/* Pending Settlements */}
           {settlements.filter((s) => !s.completed).length > 0 && (
             <>
               <h3 className="section-label text-xs mt-4">Pending</h3>
               <div className="space-y-2.5 stagger">
-                {settlements
-                  .filter((s) => !s.completed)
-                  .map((s) => (
-                    <div key={s.id} className="rounded-2xl p-4" style={{ background: 'var(--warning-muted)', border: '1px solid rgba(251,191,36,0.12)' }}>
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                            {s.from_user_name} <span style={{ color: 'var(--text-dim)' }}>→</span> {s.to_user_name}
-                          </p>
-                          <p className="font-bold" style={{ color: 'var(--warning)' }}>₹{parseFloat(s.amount).toFixed(2)}</p>
-                        </div>
-                        <button
-                          onClick={() => handleMarkComplete(s.id)}
-                          className="btn-primary px-4 py-2 text-xs cursor-pointer"
-                        >
-                          Mark Paid
-                        </button>
+                {settlements.filter((s) => !s.completed).map((s) => (
+                  <div key={s.id} className="rounded-2xl p-4" style={{ background: 'var(--warning-muted)', border: '1px solid rgba(251,191,36,0.12)' }}>
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                          {s.from_user_name} <span style={{ color: 'var(--text-dim)' }}>→</span> {s.to_user_name}
+                        </p>
+                        <p className="font-bold" style={{ color: 'var(--warning)' }}>₹{parseFloat(s.amount).toFixed(2)}</p>
                       </div>
+                      <button onClick={() => handleMarkComplete(s.id)} className="btn-primary px-4 py-2 text-xs cursor-pointer">
+                        Mark Paid
+                      </button>
                     </div>
-                  ))}
+                  </div>
+                ))}
               </div>
             </>
           )}
 
-          {/* Completed */}
           {settlements.filter((s) => s.completed).length > 0 && (
             <>
               <h3 className="section-label text-xs mt-4">Completed</h3>
               <div className="space-y-2">
-                {settlements
-                  .filter((s) => s.completed)
-                  .map((s) => (
-                    <div key={s.id} className="rounded-2xl p-4 opacity-60" style={{ background: 'var(--success-muted)', border: '1px solid rgba(52,211,153,0.1)' }}>
-                      <div className="flex items-center gap-2.5">
-                        <svg className="w-4 h-4" style={{ color: 'var(--success)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                          {s.from_user_name} → {s.to_user_name} — ₹{parseFloat(s.amount).toFixed(2)}
-                        </p>
-                      </div>
+                {settlements.filter((s) => s.completed).map((s) => (
+                  <div key={s.id} className="rounded-2xl p-4 opacity-60" style={{ background: 'var(--success-muted)', border: '1px solid rgba(52,211,153,0.1)' }}>
+                    <div className="flex items-center gap-2.5">
+                      <svg className="w-4 h-4" style={{ color: 'var(--success)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                      <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                        {s.from_user_name} → {s.to_user_name} — ₹{parseFloat(s.amount).toFixed(2)}
+                      </p>
                     </div>
-                  ))}
+                  </div>
+                ))}
               </div>
             </>
           )}
         </div>
       )}
 
-      {/* Members Tab */}
+      {/* ===== MEMBERS TAB ===== */}
       {tab === 'members' && (
         <div className="space-y-4">
-          {/* Join Request Admin Panel */}
           {isAdmin && joinRequests.filter(r => r.status === 'pending').length > 0 && (
             <div className="animate-slide-down">
               <h3 className="section-label text-xs mb-2.5">Join Requests</h3>
@@ -720,26 +601,20 @@ export default function GroupDetail() {
                   <div key={req.id} className="rounded-2xl p-4 flex justify-between items-center" style={{ background: 'var(--warning-muted)', border: '1px solid rgba(251,191,36,0.12)' }}>
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm" style={{ background: 'rgba(251,191,36,0.15)', color: 'var(--warning)' }}>
-                        {req.user_name?.charAt(0).toUpperCase() || '?'}
+                        {req.user?.name?.charAt(0).toUpperCase() || '?'}
                       </div>
                       <div>
-                        <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{req.user_name}</p>
-                        <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{req.user_email}</p>
+                        <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{req.user?.name}</p>
+                        <p className="text-[11px]" style={{ color: 'var(--text-dim)' }}>{req.user?.email}</p>
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      <button
-                        onClick={() => handleJoinAction(req.id, 'accept')}
-                        disabled={handlingRequest === req.id}
-                        className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50 cursor-pointer"
-                      >
+                      <button onClick={() => handleJoinAction(req.id, 'accept')} disabled={handlingRequest === req.id}
+                        className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50 cursor-pointer">
                         {handlingRequest === req.id ? '...' : 'Accept'}
                       </button>
-                      <button
-                        onClick={() => handleJoinAction(req.id, 'reject')}
-                        disabled={handlingRequest === req.id}
-                        className="btn-ghost px-3 py-1.5 text-xs disabled:opacity-50 cursor-pointer"
-                      >
+                      <button onClick={() => handleJoinAction(req.id, 'reject')} disabled={handlingRequest === req.id}
+                        className="btn-ghost px-3 py-1.5 text-xs disabled:opacity-50 cursor-pointer">
                         Reject
                       </button>
                     </div>
@@ -749,33 +624,23 @@ export default function GroupDetail() {
             </div>
           )}
 
-          {/* Search and add member */}
           {isAdmin && (
             <form onSubmit={handleAddMember} className="relative">
               <h3 className="section-label text-xs mb-2.5">Add Member</h3>
               <div className="flex gap-2">
                 <div className="flex-1 relative">
-                  <input
-                    type="text"
-                    value={memberSearch}
-                    onChange={(e) => handleSearchUsers(e.target.value)}
+                  <input type="text" value={memberSearch} onChange={(e) => handleSearchUsers(e.target.value)}
                     onFocus={() => searchResults.length > 0 && setShowDropdown(true)}
                     onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
-                    placeholder="Search by name or email..."
-                    className="input-dark w-full px-4 py-3 text-sm"
-                  />
+                    placeholder="Search by name or email..." className="input-dark w-full px-4 py-3 text-sm" />
                   {showDropdown && searchResults.length > 0 && (
                     <div className="absolute z-10 top-full left-0 right-0 mt-1 rounded-xl max-h-48 overflow-y-auto animate-slide-down" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', backdropFilter: 'blur(16px)', boxShadow: '0 12px 32px rgba(0,0,0,0.4)' }}>
                       {searchResults.map((u) => (
-                        <button
-                          key={u.id}
-                          type="button"
-                          onMouseDown={() => handleSelectUser(u)}
+                        <button key={u.id} type="button" onMouseDown={() => handleSelectUser(u)}
                           className="w-full text-left px-4 py-3 transition flex items-center gap-3 cursor-pointer"
                           style={{ borderBottom: '1px solid var(--border)' }}
                           onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-elevated)'}
-                          onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
-                        >
+                          onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}>
                           <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-[11px]" style={{ background: 'rgba(99,102,241,0.15)', color: 'var(--accent-bright)' }}>
                             {u.name.charAt(0).toUpperCase()}
                           </div>
@@ -793,20 +658,14 @@ export default function GroupDetail() {
                     </div>
                   )}
                 </div>
-                <button
-                  type="submit"
-                  disabled={addingMember || !selectedUser}
-                  className="btn-primary px-5 py-3 text-sm disabled:opacity-50 cursor-pointer"
-                >
-                  {addingMember ? (
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" />
-                  ) : 'Add'}
+                <button type="submit" disabled={addingMember || !selectedUser}
+                  className="btn-primary px-5 py-3 text-sm disabled:opacity-50 cursor-pointer">
+                  {addingMember ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" /> : 'Add'}
                 </button>
               </div>
             </form>
           )}
 
-          {/* Member list */}
           <div>
             <h3 className="section-label text-xs mb-2.5">Members</h3>
             <div className="space-y-2.5 stagger">
@@ -822,12 +681,8 @@ export default function GroupDetail() {
                     </div>
                   </div>
                   <div className="flex gap-1.5">
-                    {m.id === group.created_by && (
-                      <span className="badge-accent text-[10px]">Admin</span>
-                    )}
-                    {m.id === user.id && (
-                      <span className="badge-success text-[10px]">You</span>
-                    )}
+                    {m.id === group.created_by && <span className="badge-accent text-[10px]">Admin</span>}
+                    {m.id === user.id && <span className="badge-success text-[10px]">You</span>}
                   </div>
                 </div>
               ))}

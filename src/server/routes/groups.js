@@ -35,5 +35,7 @@ router.post(
 );
 
 router.delete('/:id/members/:userId', groupController.removeMember);
+router.post('/:id/leave', groupController.leaveGroup);
+router.delete('/:id', groupController.deleteGroup);
 
 module.exports = router;

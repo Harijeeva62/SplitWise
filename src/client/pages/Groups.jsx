@@ -105,12 +105,15 @@ export default function Groups() {
                     <h3 className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{group.name}</h3>
                     <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-dim)' }}>
                       {group.member_count} member{group.member_count !== 1 ? 's' : ''}
+                      {group.group_total > 0 && <> &middot; ₹{group.group_total.toFixed(2)} total</>}
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="font-bold text-sm tabular-nums" style={{ color: 'var(--text-primary)' }}>₹{(group.total_expense || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
-                  <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-dim)' }}>total</p>
+                <div className="flex items-center gap-3">
+                  {group.group_total > 0 && (
+                    <p className="font-bold text-sm tabular-nums" style={{ color: 'var(--accent-bright)' }}>₹{group.group_total.toFixed(2)}</p>
+                  )}
+                  <svg className="w-4.5 h-4.5" style={{ color: 'var(--text-dim)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                 </div>
               </div>
             </Link>

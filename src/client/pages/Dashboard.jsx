@@ -2,14 +2,14 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../utils/api';
 
+const CATEGORY_ICONS = {
+  General: '📋', Food: '🍔', Transport: '🚗', Stay: '🏨',
+  Shopping: '🛒', Entertainment: '🎬', Bills: '💡', Other: '📦',
+};
+
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-
-  const CATEGORIES = {
-    food: '🍔', transport: '🚗', shopping: '🛍️', entertainment: '🎬',
-    stay: '🏨', groceries: '🛒', bills: '📄', other: '📌',
-  };
 
   useEffect(() => {
     api
@@ -73,6 +73,26 @@ export default function Dashboard() {
         </Link>
       </div>
 
+      {/* Category Breakdown */}
+      {data?.category_totals && Object.keys(data.category_totals).length > 0 && (
+        <div>
+          <h2 className="section-label text-xs mb-3">Spending by Category</h2>
+          <div className="grid grid-cols-2 gap-2.5 stagger">
+            {Object.entries(data.category_totals)
+              .sort(([, a], [, b]) => b - a)
+              .map(([cat, total]) => (
+                <div key={cat} className="card p-3.5 flex items-center gap-3">
+                  <span className="text-xl">{CATEGORY_ICONS[cat] || '📦'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{cat}</p>
+                    <p className="text-sm font-bold tabular-nums" style={{ color: 'var(--accent-bright)' }}>₹{total.toFixed(2)}</p>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
       {/* Recent Expenses */}
       <div>
         <h2 className="section-label text-xs mb-3">Recent Expenses</h2>
@@ -89,16 +109,12 @@ export default function Dashboard() {
             {data?.recent_expenses?.map((exp) => (
               <div key={exp.id} className="card p-4 flex justify-between items-center">
                 <div className="flex items-center gap-3.5">
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 text-lg"
-                    style={{ background: 'var(--bg-elevated)' }}>
-                    {CATEGORIES[exp.category] || '📌'}
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg flex-shrink-0" style={{ background: 'var(--bg-elevated)' }}>
+                    {CATEGORY_ICONS[exp.category] || '📋'}
                   </div>
                   <div>
                     <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{exp.title}</p>
-                    <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-dim)' }}>
-                      {exp.group_name}
-                      {exp.expense_date && <span> · {new Date(exp.expense_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>}
-                    </p>
+                    <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-dim)' }}>{exp.group_name}</p>
                   </div>
                 </div>
                 <p className="font-bold text-base tabular-nums" style={{ color: 'var(--text-primary)' }}>₹{parseFloat(exp.amount).toFixed(2)}</p>

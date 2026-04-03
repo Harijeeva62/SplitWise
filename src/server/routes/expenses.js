@@ -23,9 +23,9 @@ router.post(
 
 // Dashboard must come before :groupId to avoid "dashboard" being captured as param
 router.get('/dashboard/me', expenseController.getDashboard);
+router.get('/categories', expenseController.getCategories);
 router.get('/:groupId', expenseController.getExpensesByGroup);
 router.get('/:groupId/balances', expenseController.getBalances);
-router.get('/:groupId/summary', expenseController.getGroupSummary);
 router.delete('/:expenseId', expenseController.deleteExpense);
 
 module.exports = router;
