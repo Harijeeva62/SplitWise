@@ -68,7 +68,7 @@ exports.getGroups = async (req, res) => {
 
     if (error) throw error;
 
-    // For each group, get member count
+    // For each group, get member count and total expenses
     const enriched = await Promise.all(
       groups.map(async (g) => {
         const { count } = await supabase
@@ -76,7 +76,14 @@ exports.getGroups = async (req, res) => {
           .select('*', { count: 'exact', head: true })
           .eq('group_id', g.id);
 
-        return { ...g, member_count: count || 0 };
+        const { data: expData } = await supabase
+          .from('expenses')
+          .select('amount')
+          .eq('group_id', g.id);
+
+        const total_expense = expData ? expData.reduce((sum, e) => sum + parseFloat(e.amount), 0) : 0;
+
+        return { ...g, member_count: count || 0, total_expense: parseFloat(total_expense.toFixed(2)) };
       })
     );
 

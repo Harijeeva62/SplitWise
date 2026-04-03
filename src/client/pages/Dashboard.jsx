@@ -6,6 +6,11 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  const CATEGORIES = {
+    food: '🍔', transport: '🚗', shopping: '🛍️', entertainment: '🎬',
+    stay: '🏨', groceries: '🛒', bills: '📄', other: '📌',
+  };
+
   useEffect(() => {
     api
       .get('/expenses/dashboard/me')
@@ -84,12 +89,16 @@ export default function Dashboard() {
             {data?.recent_expenses?.map((exp) => (
               <div key={exp.id} className="card p-4 flex justify-between items-center">
                 <div className="flex items-center gap-3.5">
-                  <div className="avatar w-10 h-10 rounded-xl flex-shrink-0">
-                    <svg className="w-[18px] h-[18px] text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2z" /></svg>
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 text-lg"
+                    style={{ background: 'var(--bg-elevated)' }}>
+                    {CATEGORIES[exp.category] || '📌'}
                   </div>
                   <div>
                     <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{exp.title}</p>
-                    <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-dim)' }}>{exp.group_name}</p>
+                    <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-dim)' }}>
+                      {exp.group_name}
+                      {exp.expense_date && <span> · {new Date(exp.expense_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>}
+                    </p>
                   </div>
                 </div>
                 <p className="font-bold text-base tabular-nums" style={{ color: 'var(--text-primary)' }}>₹{parseFloat(exp.amount).toFixed(2)}</p>

@@ -2,7 +2,7 @@ const supabase = require('../config/supabase');
 
 exports.addExpense = async (req, res) => {
   try {
-    const { group_id, title, amount, paid_by, split_between } = req.body;
+    const { group_id, title, amount, paid_by, split_between, category, notes, split_type, custom_splits, expense_date } = req.body;
 
     // Verify user is in the group
     const { data: membership } = await supabase
@@ -17,21 +17,42 @@ exports.addExpense = async (req, res) => {
     }
 
     // Create expense
+    const expenseData = { group_id, title, amount, paid_by, category: category || 'other', notes: notes || '' };
+    if (expense_date) expenseData.expense_date = expense_date;
+
     const { data: expense, error } = await supabase
       .from('expenses')
-      .insert({ group_id, title, amount, paid_by })
+      .insert(expenseData)
       .select()
       .single();
 
     if (error) throw error;
 
-    // Equal split
-    const splitAmount = parseFloat((amount / split_between.length).toFixed(2));
-    const splits = split_between.map(userId => ({
-      expense_id: expense.id,
-      user_id: userId,
-      amount: splitAmount,
-    }));
+    // Build splits based on split_type
+    let splits;
+    if (split_type === 'custom' && custom_splits && custom_splits.length > 0) {
+      // Custom amount split
+      splits = custom_splits.map(s => ({
+        expense_id: expense.id,
+        user_id: s.user_id,
+        amount: parseFloat(parseFloat(s.amount).toFixed(2)),
+      }));
+    } else if (split_type === 'percentage' && custom_splits && custom_splits.length > 0) {
+      // Percentage split
+      splits = custom_splits.map(s => ({
+        expense_id: expense.id,
+        user_id: s.user_id,
+        amount: parseFloat((amount * s.percentage / 100).toFixed(2)),
+      }));
+    } else {
+      // Equal split (default)
+      const splitAmount = parseFloat((amount / split_between.length).toFixed(2));
+      splits = split_between.map(userId => ({
+        expense_id: expense.id,
+        user_id: userId,
+        amount: splitAmount,
+      }));
+    }
 
     const { error: splitError } = await supabase.from('expense_splits').insert(splits);
     if (splitError) throw splitError;
@@ -256,5 +277,110 @@ exports.getDashboard = async (req, res) => {
   } catch (err) {
     console.error('Dashboard error:', err);
     res.status(500).json({ error: 'Failed to load dashboard.' });
+  }
+};
+
+exports.deleteExpense = async (req, res) => {
+  try {
+    const { expenseId } = req.params;
+    const userId = req.user.id;
+
+    // Get expense to check ownership
+    const { data: expense } = await supabase
+      .from('expenses')
+      .select('id, paid_by, group_id')
+      .eq('id', expenseId)
+      .single();
+
+    if (!expense) {
+      return res.status(404).json({ error: 'Expense not found.' });
+    }
+
+    // Check if user is the payer or group admin
+    const { data: group } = await supabase
+      .from('groups')
+      .select('created_by')
+      .eq('id', expense.group_id)
+      .single();
+
+    if (expense.paid_by !== userId && group?.created_by !== userId) {
+      return res.status(403).json({ error: 'Only the payer or group admin can delete an expense.' });
+    }
+
+    // Delete splits first (cascade should handle this, but explicit)
+    await supabase.from('expense_splits').delete().eq('expense_id', expenseId);
+    const { error } = await supabase.from('expenses').delete().eq('id', expenseId);
+    if (error) throw error;
+
+    res.json({ message: 'Expense deleted.' });
+  } catch (err) {
+    console.error('Delete expense error:', err);
+    res.status(500).json({ error: 'Failed to delete expense.' });
+  }
+};
+
+exports.getGroupSummary = async (req, res) => {
+  try {
+    const { groupId } = req.params;
+
+    // Get all expenses
+    const { data: expenses } = await supabase
+      .from('expenses')
+      .select('id, amount, paid_by, category, created_at')
+      .eq('group_id', groupId);
+
+    if (!expenses || expenses.length === 0) {
+      return res.json({ total_spend: 0, expense_count: 0, category_breakdown: [], monthly_totals: [] });
+    }
+
+    const total_spend = expenses.reduce((sum, e) => sum + parseFloat(e.amount), 0);
+
+    // Category breakdown
+    const catMap = {};
+    expenses.forEach(e => {
+      const cat = e.category || 'other';
+      if (!catMap[cat]) catMap[cat] = 0;
+      catMap[cat] += parseFloat(e.amount);
+    });
+    const category_breakdown = Object.entries(catMap)
+      .map(([category, amount]) => ({ category, amount: parseFloat(amount.toFixed(2)) }))
+      .sort((a, b) => b.amount - a.amount);
+
+    // Monthly totals (last 6 months)
+    const monthMap = {};
+    expenses.forEach(e => {
+      const d = new Date(e.created_at);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (!monthMap[key]) monthMap[key] = 0;
+      monthMap[key] += parseFloat(e.amount);
+    });
+    const monthly_totals = Object.entries(monthMap)
+      .map(([month, amount]) => ({ month, amount: parseFloat(amount.toFixed(2)) }))
+      .sort((a, b) => a.month.localeCompare(b.month))
+      .slice(-6);
+
+    // Top spender
+    const spenderMap = {};
+    expenses.forEach(e => {
+      if (!spenderMap[e.paid_by]) spenderMap[e.paid_by] = 0;
+      spenderMap[e.paid_by] += parseFloat(e.amount);
+    });
+    const topSpenderId = Object.entries(spenderMap).sort((a, b) => b[1] - a[1])[0]?.[0];
+    let top_spender = null;
+    if (topSpenderId) {
+      const { data: spenderUser } = await supabase.from('users').select('id, name').eq('id', topSpenderId).single();
+      top_spender = { ...spenderUser, amount: parseFloat(spenderMap[topSpenderId].toFixed(2)) };
+    }
+
+    res.json({
+      total_spend: parseFloat(total_spend.toFixed(2)),
+      expense_count: expenses.length,
+      category_breakdown,
+      monthly_totals,
+      top_spender,
+    });
+  } catch (err) {
+    console.error('Group summary error:', err);
+    res.status(500).json({ error: 'Failed to get group summary.' });
   }
 };

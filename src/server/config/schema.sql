@@ -39,8 +39,16 @@ CREATE TABLE IF NOT EXISTS expenses (
   title VARCHAR(200) NOT NULL,
   amount DECIMAL(12, 2) NOT NULL CHECK (amount > 0),
   paid_by UUID REFERENCES users(id) ON DELETE CASCADE,
+  category VARCHAR(50) DEFAULT 'other',
+  notes TEXT DEFAULT '',
+  expense_date DATE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- If table already exists, add new columns:
+-- ALTER TABLE expenses ADD COLUMN IF NOT EXISTS category VARCHAR(50) DEFAULT 'other';
+-- ALTER TABLE expenses ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
+-- ALTER TABLE expenses ADD COLUMN IF NOT EXISTS expense_date DATE;
 
 -- Expense splits table
 CREATE TABLE IF NOT EXISTS expense_splits (

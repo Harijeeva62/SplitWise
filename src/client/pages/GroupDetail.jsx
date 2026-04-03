@@ -10,6 +10,7 @@ export default function GroupDetail() {
   const [expenses, setExpenses] = useState([]);
   const [balances, setBalances] = useState([]);
   const [settlements, setSettlements] = useState([]);
+  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('expenses');
 
@@ -26,6 +27,11 @@ export default function GroupDetail() {
   const [expAmount, setExpAmount] = useState('');
   const [expPaidBy, setExpPaidBy] = useState('');
   const [expSplitBetween, setExpSplitBetween] = useState([]);
+  const [expCategory, setExpCategory] = useState('other');
+  const [expNotes, setExpNotes] = useState('');
+  const [expSplitType, setExpSplitType] = useState('equal');
+  const [customSplits, setCustomSplits] = useState({});
+  const [expDate, setExpDate] = useState('');
   const [addingExpense, setAddingExpense] = useState(false);
 
   // Join requests (admin)
@@ -34,18 +40,33 @@ export default function GroupDetail() {
 
   const isAdmin = group?.created_by === user?.id;
 
+  const CATEGORIES = [
+    { key: 'food', label: 'Food', icon: '🍔' },
+    { key: 'transport', label: 'Transport', icon: '🚗' },
+    { key: 'shopping', label: 'Shopping', icon: '🛍️' },
+    { key: 'entertainment', label: 'Fun', icon: '🎬' },
+    { key: 'stay', label: 'Stay', icon: '🏨' },
+    { key: 'groceries', label: 'Groceries', icon: '🛒' },
+    { key: 'bills', label: 'Bills', icon: '📄' },
+    { key: 'other', label: 'Other', icon: '📌' },
+  ];
+
+  const getCategoryInfo = (key) => CATEGORIES.find(c => c.key === key) || CATEGORIES[CATEGORIES.length - 1];
+
   const fetchAll = async () => {
     try {
-      const [gRes, eRes, bRes, sRes] = await Promise.all([
+      const [gRes, eRes, bRes, sRes, sumRes] = await Promise.all([
         api.get(`/groups/${id}`),
         api.get(`/expenses/${id}`),
         api.get(`/expenses/${id}/balances`),
         api.get(`/settle/${id}`),
+        api.get(`/expenses/${id}/summary`).catch(() => ({ data: null })),
       ]);
       setGroup(gRes.data);
       setExpenses(eRes.data);
       setBalances(bRes.data);
       setSettlements(sRes.data);
+      setSummary(sumRes.data);
     } catch {
     } finally {
       setLoading(false);
@@ -112,23 +133,53 @@ export default function GroupDetail() {
     e.preventDefault();
     setAddingExpense(true);
     try {
-      await api.post('/expenses', {
+      const splitBetween = expSplitBetween.length > 0 ? expSplitBetween : group.members.map((m) => m.id);
+      const payload = {
         group_id: id,
         title: expTitle,
         amount: parseFloat(expAmount),
         paid_by: expPaidBy || user.id,
-        split_between: expSplitBetween.length > 0 ? expSplitBetween : group.members.map((m) => m.id),
-      });
+        split_between: splitBetween,
+        category: expCategory,
+        notes: expNotes,
+        split_type: expSplitType,
+        expense_date: expDate || undefined,
+      };
+      if (expSplitType === 'custom') {
+        payload.custom_splits = splitBetween.map(uid => ({
+          user_id: uid,
+          amount: parseFloat(customSplits[uid] || 0),
+        }));
+      } else if (expSplitType === 'percentage') {
+        payload.custom_splits = splitBetween.map(uid => ({
+          user_id: uid,
+          percentage: parseFloat(customSplits[uid] || 0),
+        }));
+      }
+      await api.post('/expenses', payload);
       setExpTitle('');
       setExpAmount('');
       setExpPaidBy('');
       setExpSplitBetween([]);
+      setExpCategory('other');
+      setExpNotes('');
+      setExpSplitType('equal');
+      setCustomSplits({});
+      setExpDate('');
       setShowAddExpense(false);
       fetchAll();
     } catch {
     } finally {
       setAddingExpense(false);
     }
+  };
+
+  const handleDeleteExpense = async (expenseId) => {
+    if (!window.confirm('Delete this expense?')) return;
+    try {
+      await api.delete(`/expenses/${expenseId}`);
+      fetchAll();
+    } catch {}
   };
 
   const handleSettle = async (fromUser, toUser, amount) => {
@@ -222,6 +273,38 @@ export default function GroupDetail() {
             </p>
           </div>
         </div>
+        {/* Summary Stats */}
+        {summary && (
+          <div className="mt-5 pt-4 relative z-10" style={{ borderTop: '1px solid var(--border)' }}>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="text-center">
+                <p className="text-lg font-bold" style={{ color: 'var(--accent-bright)' }}>₹{parseFloat(summary.total_spend || 0).toLocaleString('en-IN')}</p>
+                <p className="text-[10px] uppercase tracking-wider mt-0.5" style={{ color: 'var(--text-dim)' }}>Total Spent</p>
+              </div>
+              <div className="text-center">
+                <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{summary.expense_count || 0}</p>
+                <p className="text-[10px] uppercase tracking-wider mt-0.5" style={{ color: 'var(--text-dim)' }}>Expenses</p>
+              </div>
+              <div className="text-center">
+                <p className="text-lg font-bold" style={{ color: 'var(--success)' }}>{summary.top_spender?.name || '—'}</p>
+                <p className="text-[10px] uppercase tracking-wider mt-0.5" style={{ color: 'var(--text-dim)' }}>Top Spender</p>
+              </div>
+            </div>
+            {/* Category Breakdown */}
+            {summary.category_breakdown?.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {summary.category_breakdown.map((c) => {
+                  const cat = getCategoryInfo(c.category);
+                  return (
+                    <span key={c.category} className="badge text-[11px] flex items-center gap-1">
+                      {cat.icon} {cat.label}: ₹{parseFloat(c.total).toLocaleString('en-IN')}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -258,6 +341,25 @@ export default function GroupDetail() {
 
           {showAddExpense && (
             <form onSubmit={handleAddExpense} className="card p-5 space-y-3.5 animate-slide-down">
+              {/* Category selector */}
+              <div>
+                <label className="section-label block mb-2">Category</label>
+                <div className="flex flex-wrap gap-2">
+                  {CATEGORIES.map((cat) => (
+                    <button
+                      key={cat.key}
+                      type="button"
+                      onClick={() => setExpCategory(cat.key)}
+                      className="px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5"
+                      style={expCategory === cat.key
+                        ? { background: 'var(--accent)', color: '#fff', boxShadow: '0 2px 8px rgba(99,102,241,0.3)' }
+                        : { background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+                    >
+                      <span>{cat.icon}</span> {cat.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div>
                 <label className="section-label block mb-2">Title</label>
                 <input
@@ -269,17 +371,38 @@ export default function GroupDetail() {
                   required
                 />
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="section-label block mb-2">Amount</label>
+                  <input
+                    type="number"
+                    value={expAmount}
+                    onChange={(e) => setExpAmount(e.target.value)}
+                    placeholder="₹"
+                    className="input-dark w-full px-4 py-3 text-sm"
+                    min="0.01"
+                    step="0.01"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="section-label block mb-2">Date</label>
+                  <input
+                    type="date"
+                    value={expDate}
+                    onChange={(e) => setExpDate(e.target.value)}
+                    className="input-dark w-full px-4 py-3 text-sm"
+                  />
+                </div>
+              </div>
               <div>
-                <label className="section-label block mb-2">Amount</label>
-                <input
-                  type="number"
-                  value={expAmount}
-                  onChange={(e) => setExpAmount(e.target.value)}
-                  placeholder="Amount (₹)"
-                  className="input-dark w-full px-4 py-3 text-sm"
-                  min="0.01"
-                  step="0.01"
-                  required
+                <label className="section-label block mb-2">Notes (optional)</label>
+                <textarea
+                  value={expNotes}
+                  onChange={(e) => setExpNotes(e.target.value)}
+                  placeholder="Add a description..."
+                  className="input-dark w-full px-4 py-3 text-sm resize-none"
+                  rows={2}
                 />
               </div>
               <div>
@@ -297,35 +420,89 @@ export default function GroupDetail() {
                   ))}
                 </select>
               </div>
+              {/* Split type toggle */}
+              <div>
+                <label className="section-label block mb-2">Split Type</label>
+                <div className="flex gap-1 rounded-xl p-1" style={{ background: 'var(--bg-elevated)' }}>
+                  {[
+                    { key: 'equal', label: 'Equal' },
+                    { key: 'custom', label: 'Custom ₹' },
+                    { key: 'percentage', label: 'Percentage' },
+                  ].map((st) => (
+                    <button
+                      key={st.key}
+                      type="button"
+                      onClick={() => { setExpSplitType(st.key); setCustomSplits({}); }}
+                      className="flex-1 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer"
+                      style={expSplitType === st.key
+                        ? { background: 'var(--bg-card)', color: 'var(--accent-bright)', boxShadow: '0 2px 6px rgba(0,0,0,0.2)' }
+                        : { color: 'var(--text-dim)' }}
+                    >
+                      {st.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div>
                 <label className="section-label block mb-2">Split between</label>
                 <div className="space-y-1.5">
-                  {group.members?.map((m) => (
-                    <label key={m.id} className="flex items-center gap-3 text-sm p-2.5 rounded-xl cursor-pointer transition-colors" style={{ color: 'var(--text-secondary)' }}
-                      onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-elevated)'}
-                      onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={
-                          expSplitBetween.length === 0 || expSplitBetween.includes(m.id)
-                        }
-                        onChange={() => {
-                          if (expSplitBetween.length === 0) {
-                            setExpSplitBetween(
-                              group.members.filter((x) => x.id !== m.id).map((x) => x.id)
-                            );
-                          } else {
-                            toggleSplitUser(m.id);
-                          }
-                        }}
-                        className="w-4 h-4 rounded"
-                        style={{ accentColor: 'var(--accent)' }}
-                      />
-                      {m.name}
-                    </label>
-                  ))}
+                  {group.members?.map((m) => {
+                    const isChecked = expSplitBetween.length === 0 || expSplitBetween.includes(m.id);
+                    return (
+                      <div key={m.id} className="flex items-center gap-3 text-sm p-2.5 rounded-xl transition-colors"
+                        style={{ color: 'var(--text-secondary)' }}
+                        onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-elevated)'}
+                        onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <label className="flex items-center gap-3 flex-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              if (expSplitBetween.length === 0) {
+                                setExpSplitBetween(
+                                  group.members.filter((x) => x.id !== m.id).map((x) => x.id)
+                                );
+                              } else {
+                                toggleSplitUser(m.id);
+                              }
+                            }}
+                            className="w-4 h-4 rounded"
+                            style={{ accentColor: 'var(--accent)' }}
+                          />
+                          {m.name}
+                        </label>
+                        {expSplitType !== 'equal' && isChecked && (
+                          <input
+                            type="number"
+                            placeholder={expSplitType === 'percentage' ? '%' : '₹'}
+                            value={customSplits[m.id] || ''}
+                            onChange={(e) => setCustomSplits(prev => ({ ...prev, [m.id]: e.target.value }))}
+                            className="input-dark w-20 px-2 py-1.5 text-xs text-right"
+                            min="0"
+                            step="0.01"
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
+                {expSplitType === 'custom' && expAmount && (
+                  <p className="text-[11px] mt-2" style={{ color: (() => {
+                    const total = Object.values(customSplits).reduce((s, v) => s + (parseFloat(v) || 0), 0);
+                    return Math.abs(total - parseFloat(expAmount)) < 0.01 ? 'var(--success)' : 'var(--danger)';
+                  })() }}>
+                    Total: ₹{Object.values(customSplits).reduce((s, v) => s + (parseFloat(v) || 0), 0).toFixed(2)} / ₹{parseFloat(expAmount).toFixed(2)}
+                  </p>
+                )}
+                {expSplitType === 'percentage' && (
+                  <p className="text-[11px] mt-2" style={{ color: (() => {
+                    const total = Object.values(customSplits).reduce((s, v) => s + (parseFloat(v) || 0), 0);
+                    return Math.abs(total - 100) < 0.01 ? 'var(--success)' : 'var(--danger)';
+                  })() }}>
+                    Total: {Object.values(customSplits).reduce((s, v) => s + (parseFloat(v) || 0), 0).toFixed(1)}%
+                  </p>
+                )}
               </div>
               <button
                 type="submit"
@@ -352,31 +529,53 @@ export default function GroupDetail() {
             </div>
           ) : (
             <div className="space-y-2.5 stagger">
-              {expenses.map((exp) => (
-                <div key={exp.id} className="card p-4">
-                  <div className="flex justify-between items-start">
-                    <div className="flex items-start gap-3.5">
-                      <div className="avatar w-10 h-10 rounded-xl flex-shrink-0 mt-0.5">
-                        <svg className="w-[18px] h-[18px] text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2z" /></svg>
+              {expenses.map((exp) => {
+                const cat = getCategoryInfo(exp.category);
+                return (
+                  <div key={exp.id} className="card p-4">
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-start gap-3.5">
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 text-lg"
+                          style={{ background: 'var(--bg-elevated)' }}>
+                          {cat.icon}
+                        </div>
+                        <div>
+                          <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{exp.title}</p>
+                          <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-dim)' }}>
+                            Paid by {exp.payer?.name || 'Unknown'}
+                            {exp.expense_date && <span> · {new Date(exp.expense_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>}
+                          </p>
+                          {exp.notes && (
+                            <p className="text-[11px] mt-1 italic" style={{ color: 'var(--text-muted)' }}>{exp.notes}</p>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{exp.title}</p>
-                        <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-dim)' }}>
-                          Paid by {exp.payer?.name || 'Unknown'}
-                        </p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>₹{parseFloat(exp.amount).toFixed(2)}</p>
+                        {(exp.paid_by === user.id || isAdmin) && (
+                          <button
+                            onClick={() => handleDeleteExpense(exp.id)}
+                            className="p-1.5 rounded-lg transition-colors cursor-pointer"
+                            style={{ color: 'var(--text-dim)' }}
+                            onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.15)'; e.currentTarget.style.color = 'var(--danger)'; }}
+                            onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-dim)'; }}
+                            title="Delete expense"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        )}
                       </div>
                     </div>
-                    <p className="font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>₹{parseFloat(exp.amount).toFixed(2)}</p>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {exp.splits?.map((s) => (
+                        <span key={s.user_id} className="badge text-[11px]">
+                          {s.user_name}: ₹{parseFloat(s.amount).toFixed(2)}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {exp.splits?.map((s) => (
-                      <span key={s.user_id} className="badge text-[11px]">
-                        {s.user_name}: ₹{parseFloat(s.amount).toFixed(2)}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

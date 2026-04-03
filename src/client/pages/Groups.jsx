@@ -108,7 +108,10 @@ export default function Groups() {
                     </p>
                   </div>
                 </div>
-                <svg className="w-4.5 h-4.5" style={{ color: 'var(--text-dim)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                <div className="text-right">
+                  <p className="font-bold text-sm tabular-nums" style={{ color: 'var(--text-primary)' }}>₹{(group.total_expense || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                  <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-dim)' }}>total</p>
+                </div>
               </div>
             </Link>
           ))}

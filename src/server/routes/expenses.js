@@ -25,5 +25,7 @@ router.post(
 router.get('/dashboard/me', expenseController.getDashboard);
 router.get('/:groupId', expenseController.getExpensesByGroup);
 router.get('/:groupId/balances', expenseController.getBalances);
+router.get('/:groupId/summary', expenseController.getGroupSummary);
+router.delete('/:expenseId', expenseController.deleteExpense);
 
 module.exports = router;
