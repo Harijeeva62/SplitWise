@@ -29,11 +29,22 @@ exports.addExpense = async (req, res) => {
     };
     if (date) expenseData.date = date;
 
-    const { data: expense, error } = await supabase
+    let expense, error;
+    ({ data: expense, error } = await supabase
       .from('expenses')
       .insert(expenseData)
       .select()
-      .single();
+      .single());
+
+    // If 'date' column doesn't exist yet, retry without it
+    if (error && error.code === 'PGRST204' && expenseData.date) {
+      delete expenseData.date;
+      ({ data: expense, error } = await supabase
+        .from('expenses')
+        .insert(expenseData)
+        .select()
+        .single());
+    }
 
     if (error) throw error;
 
