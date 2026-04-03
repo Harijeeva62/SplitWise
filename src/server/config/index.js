@@ -1,5 +1,8 @@
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '..', '..', '.env') });
+// Load .env for local dev; Vercel uses its own env vars
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config({ path: path.join(__dirname, '..', '..', '..', '.env') });
+}
 
 module.exports = {
   port: process.env.PORT || 5000,
