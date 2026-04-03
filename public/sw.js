@@ -1,4 +1,4 @@
-const CACHE_NAME = 'splitapp-v1';
+const CACHE_NAME = 'splitapp-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -31,6 +31,13 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET requests
   if (request.method !== 'GET') return;
 
+  // Skip Vite HMR websocket and module requests during dev
+  if (request.url.includes('?token=') || request.url.includes('/@') || 
+      request.url.includes('/node_modules/') || request.url.includes('.jsx') ||
+      request.url.includes('.tsx') || request.url.includes('.css?')) {
+    return;
+  }
+
   // For API requests — network only, cache response
   if (request.url.includes('/auth/') || request.url.includes('/groups') || 
       request.url.includes('/expenses') || request.url.includes('/settle')) {
@@ -46,14 +53,14 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For static assets — cache first, network fallback
+  // For static assets — network first, cache fallback
   event.respondWith(
-    caches.match(request).then((cached) => {
-      return cached || fetch(request).then((response) => {
+    fetch(request)
+      .then((response) => {
         const clone = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
         return response;
-      });
-    })
+      })
+      .catch(() => caches.match(request))
   );
 });
