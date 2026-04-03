@@ -6,7 +6,9 @@
     { "source": "/groups/(.*)", "destination": "/api" },
     { "source": "/groups", "destination": "/api" },
     { "source": "/expenses/(.*)", "destination": "/api" },
+    { "source": "/expenses", "destination": "/api" },
     { "source": "/settle/(.*)", "destination": "/api" },
+    { "source": "/settle", "destination": "/api" },
     { "source": "/((?!api|assets|icon|manifest|sw).*)", "destination": "/index.html" }
   ]
 }
